@@ -3,15 +3,48 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const accountButton = document.getElementById("account-button");
+  const accountMenu = document.getElementById("account-menu");
+  const accountLabel = document.getElementById("account-label");
+  const loginButton = document.getElementById("login-button");
+  const logoutButton = document.getElementById("logout-button");
+  const loginDialog = document.getElementById("login-dialog");
+  const loginForm = document.getElementById("login-form");
+  const loginMessage = document.getElementById("login-message");
+  const signupContainer = document.getElementById("signup-container");
+  let teacherUsername = null;
+
+  function updateTeacherView(username) {
+    teacherUsername = username;
+    const isTeacher = Boolean(username);
+    signupContainer.classList.toggle("hidden", !isTeacher);
+    accountLabel.textContent = isTeacher ? `Signed in as ${username}` : "";
+    accountLabel.classList.toggle("hidden", !isTeacher);
+    loginButton.classList.toggle("hidden", isTeacher);
+    logoutButton.classList.toggle("hidden", !isTeacher);
+  }
+
+  async function refreshTeacherView() {
+    try {
+      const response = await fetch("/auth/me");
+      const authState = await response.json();
+      updateTeacherView(authState.authenticated ? authState.username : null);
+    } catch (error) {
+      updateTeacherView(null);
+      console.error("Error checking teacher session:", error);
+    }
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
       const response = await fetch("/activities");
+      if (!response.ok) throw new Error("Activity request failed");
       const activities = await response.json();
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -28,10 +61,12 @@ document.addEventListener("DOMContentLoaded", () => {
               <h5>Participants:</h5>
               <ul class="participants-list">
                 ${details.participants
-                  .map(
-                    (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
-                  )
+                  .map((email) => {
+                    const unregisterButton = teacherUsername
+                      ? `<button class="delete-btn" data-activity="${name}" data-email="${email}" aria-label="Remove ${email}">Remove</button>`
+                      : "";
+                    return `<li><span class="participant-email">${email}</span>${unregisterButton}</li>`;
+                  })
                   .join("")}
               </ul>
             </div>`
@@ -155,6 +190,66 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  accountButton.addEventListener("click", () => {
+    const isOpen = !accountMenu.classList.contains("hidden");
+    accountMenu.classList.toggle("hidden", isOpen);
+    accountButton.setAttribute("aria-expanded", String(!isOpen));
+  });
+
+  loginButton.addEventListener("click", () => {
+    accountMenu.classList.add("hidden");
+    accountButton.setAttribute("aria-expanded", "false");
+    loginMessage.textContent = "";
+    loginMessage.className = "hidden";
+    loginDialog.showModal();
+  });
+
+  document.getElementById("cancel-login").addEventListener("click", () => loginDialog.close());
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(loginForm);
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Unable to log in");
+
+      updateTeacherView(result.username);
+      loginForm.reset();
+      loginDialog.close();
+      await fetchActivities();
+    } catch (error) {
+      loginMessage.textContent = error.message;
+      loginMessage.className = "error";
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    try {
+      await fetch("/auth/logout", { method: "POST" });
+      updateTeacherView(null);
+      accountMenu.classList.add("hidden");
+      accountButton.setAttribute("aria-expanded", "false");
+      await fetchActivities();
+    } catch (error) {
+      console.error("Error signing out:", error);
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".account-control")) {
+      accountMenu.classList.add("hidden");
+      accountButton.setAttribute("aria-expanded", "false");
+    }
+  });
+
   // Initialize app
-  fetchActivities();
+  refreshTeacherView().then(fetchActivities);
 });
